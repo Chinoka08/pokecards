@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Redirigiendo...</title>
+<script>
+  // AdamsPay redirige aquí cuando el usuario cancela manualmente
+  // Reenviamos a gracias.html con reason=cancelled para que
+  // muestre el estado correcto con el polling
+  const p      = new URLSearchParams(window.location.search);
+  const debtId = p.get('debtId') || p.get('debt_id') || p.get('docId') || '';
+  const reason = p.get('reason') || 'cancelled';
+  const dest   = '/gracias.html?reason=' + reason
+               + (debtId ? '&debtId=' + encodeURIComponent(debtId) : '');
+  window.location.replace(dest);
+</script>
+</head>
+<body></body>
+</html>

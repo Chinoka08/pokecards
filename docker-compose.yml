@@ -1,0 +1,13 @@
+# MongoDB local para desarrollo:  docker compose up -d
+services:
+  mongo:
+    image: mongo:7
+    container_name: pokecards-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - pokecards-data:/data/db
+
+volumes:
+  pokecards-data:

@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Estado de tu pago — PokeCards Store</title>
+<link href="https://fonts.googleapis.com/css2?family=Bangers&family=Nunito:wght@400;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/gracias.css">
+</head>
+<body>
+<canvas id="confetti-canvas"></canvas>
+
+<div class="card loading" id="main-card">
+
+  <div class="page-header">
+    <span class="big-icon" id="big-icon">⏳</span>
+    <div class="status-badge badge-loading" id="status-badge">VERIFICANDO PAGO...</div>
+    <div class="page-title gray" id="page-title">Confirmando</div>
+    <p class="page-sub" id="page-sub">Estamos verificando el estado de tu pago con AdamsPay.</p>
+  </div>
+
+  <!-- SPINNER (mientras hace polling) -->
+  <div class="spinner-wrap" id="spinner-wrap">
+    <div class="spinner"></div>
+    <div class="spinner-text">Consultando estado...</div>
+    <div class="poll-dots" id="poll-dots">
+      <div class="poll-dot active" id="dot-0"></div>
+      <div class="poll-dot" id="dot-1"></div>
+      <div class="poll-dot" id="dot-2"></div>
+      <div class="poll-dot" id="dot-3"></div>
+      <div class="poll-dot" id="dot-4"></div>
+    </div>
+    <div class="attempt-text" id="attempt-text">Intento 1 de 5...</div>
+  </div>
+
+  <!-- DETALLE COMPRA (paid) -->
+  <div id="section-order" style="display:none;">
+    <div class="order-box">
+      <div class="order-head">
+        <span class="order-head-lbl">📦 Detalle de tu compra</span>
+        <span class="order-ref" id="order-ref"></span>
+      </div>
+      <div class="order-items" id="order-items-list"></div>
+      <div class="order-foot">
+        <span class="foot-lbl">Total pagado</span>
+        <span class="foot-val" id="total-paid">Gs. —</span>
+      </div>
+    </div>
+    <div class="buyer-box" id="buyer-box" style="display:none;">
+      <div class="buyer-row">👤 <strong id="b-name">—</strong></div>
+      <div class="buyer-row">📧 <strong id="b-email">—</strong></div>
+    </div>
+  </div>
+
+  <!-- RAZONES (failed) -->
+  <div id="section-reasons" style="display:none;">
+    <div class="reasons-box">
+      <div class="reasons-title">¿Qué pudo haber pasado?</div>
+      <div class="reason-item"><span>⏱️</span> El tiempo de pago expiró</div>
+      <div class="reason-item"><span>🚫</span> El pago fue cancelado</div>
+      <div class="reason-item"><span>💳</span> Fondos insuficientes o datos incorrectos</div>
+      <div class="reason-item"><span>🌐</span> Problema de conexión durante el proceso</div>
+    </div>
+    <p class="no-charge">✓ No se realizó ningún cobro</p>
+  </div>
+
+  <!-- BOTONES -->
+  <div class="btns" id="btns-section" style="display:none;"></div>
+  <div class="debt-ref" id="debt-ref-txt"></div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  1. CONFIG Y PARÁMETROS
+// ═══════════════════════════════════════════════════════════════
+const IMG_BASE = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/';
+
+const params = new URLSearchParams(window.location.search);
+console.log(params.get('doc_id'));
+const debtId = params.get('debtId') || params.get('debt_id') || params.get('doc_id');
+
+const reason = params.get('reason'); // 'cancelled' | 'expired' | null
+
+// Reintenta hasta 5 veces con 2s de pausa entre intentos
+const MAX_ATTEMPTS = 5;
+const POLL_DELAY   = 2000; // ms
+let   attempt      = 0;
+
+
+// ═══════════════════════════════════════════════════════════════
+//  2. PEDIDO GUARDADO EN LOCALSTORAGE
+// ═══════════════════════════════════════════════════════════════
+function getSavedOrder(id) {
+  console.log('[Debug] getSavedOrder id:', id);
+  if (!id) return null;
+  try {
+    const raw = localStorage.getItem('pokecards:order:' + id);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+// Limpia pedidos de más de 7 días
+function cleanOldOrders() {
+  try {
+    const limit = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    Object.keys(localStorage)
+      .filter(k => k.startsWith('pokecards:order:'))
+      .forEach(k => {
+        const o = JSON.parse(localStorage.getItem(k) || '{}');
+        if (!o.savedAt || o.savedAt < limit) localStorage.removeItem(k);
+      });
+  } catch {}
+}
+
+// Escapa texto antes de meterlo en innerHTML
+const esc = (s) => String(s).replace(/[&<>"']/g, c =>
+  ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+
+function renderSavedOrder(order) {
+  const list = document.getElementById('order-items-list');
+  list.innerHTML = order.items.map(item => {
+    const subtotal = item.price * item.qty;
+    return `
+      <div class="order-item">
+        <img class="item-img" src="${esc(item.img)}" alt="${esc(item.name)}"
+          onerror="this.src='https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${Number(item.pokeId)}.png'">
+        <div class="item-info">
+          <div class="item-name">${esc(item.name)}</div>
+          <div class="item-meta">#${String(item.pokeId).padStart(3,'0')} · Cantidad: ${Number(item.qty)}</div>
+        </div>
+        <div class="item-price">Gs. ${subtotal.toLocaleString()}</div>
+      </div>`;
+  }).join('');
+
+  if (order.buyer?.name || order.buyer?.email) {
+    document.getElementById('buyer-box').style.display = 'block';
+    document.getElementById('b-name').textContent  = order.buyer.name  || '—';
+    document.getElementById('b-email').textContent = order.buyer.email || '—';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  3. DETALLE DE LA ORDEN (usa el pedido guardado o, si no hay,
+//     los datos de AdamsPay + nuestro servidor)
+// ═══════════════════════════════════════════════════════════════
+// Parsear "pk006 x1, pk025 x2" → [{pokeId:6,qty:1}, ...]
+function parseItemsMeta(raw) {
+  if (!raw) return [];
+  return raw.split(',').map(s => s.trim()).reduce((acc, part) => {
+    const m = part.match(/^pk(\d+)\s+x(\d+)$/i);
+    if (m) acc.push({ pokeId: parseInt(m[1],10), qty: parseInt(m[2],10) });
+    return acc;
+  }, []);
+}
+
+function fillOrderDetail(data) {
+  console.log('[Debug] fillOrderDetail data:', data.label);
+  const saved = getSavedOrder(data.debtId || debtId);
+
+  if (data.debtId) document.getElementById('order-ref').textContent = '#' + data.debtId;
+
+  // Total: preferí el que confirma AdamsPay; si falta, el guardado
+  const total = data.amount?.value ?? saved?.total;
+  if (total) document.getElementById('total-paid').textContent = 'Gs. ' + Number(total).toLocaleString();
+
+  // Si hay pedido guardado en este navegador, mostrarlo y listo
+ console.log(saved);
+ if (saved) { renderSavedOrder(saved); return; }
+
+  // ── Respaldo: reconstruir desde los metadatos de AdamsPay ──
+  const meta  = data.metadata || {};
+  const label = data.label    || '';
+  const list  = document.getElementById('order-items-list');
+
+  const parsed = parseItemsMeta(meta.items || '');
+
+  if (parsed.length > 0) {
+    // Un solo request a nuestro servidor con todos los IDs del pedido
+    const ids = parsed.map(i => i.pokeId).join(',');
+    fetch('/api/pokemons?ids=' + ids)
+      .then(r => r.json())
+      .then(({ pokemons }) => {
+        const byId = Object.fromEntries(pokemons.map(p => [p.pokeId, p]));
+        return parsed.map(item => ({
+          ...item,
+          name:  byId[item.pokeId]?.name  || 'Pokémon #' + item.pokeId,
+          price: byId[item.pokeId]?.price || 0,
+          img:   byId[item.pokeId]?.img   || IMG_BASE + item.pokeId + '.png',
+        }));
+      })
+      .catch(() => parsed.map(item => ({
+        ...item, name: 'Pokémon #' + item.pokeId, price: 0, img: IMG_BASE + item.pokeId + '.png',
+      })))
+      .then(items => {
+        list.innerHTML = items.map(item => {
+          const subtotal = item.price * item.qty;
+          return `
+            <div class="order-item">
+              <img class="item-img"
+                src="${esc(item.img)}"
+                alt="${esc(item.name)}"
+                onerror="this.src='https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${item.pokeId}.png'">
+              <div class="item-info">
+                <div class="item-name">${esc(item.name)}</div>
+                <div class="item-meta">#${String(item.pokeId).padStart(3,'0')} · Cantidad: ${item.qty}</div>
+              </div>
+              ${subtotal ? `<div class="item-price">Gs. ${subtotal.toLocaleString()}</div>` : ''}
+            </div>`;
+        }).join('');
+      });
+
+    // Mientras carga, mostrar placeholder
+    list.innerHTML = parsed.map(item => `
+      <div class="order-item">
+        <div class="item-img-ph">🎴</div>
+        <div class="item-info">
+          <div class="item-name">Pokémon #${item.pokeId}</div>
+          <div class="item-meta">Cantidad: ${item.qty}</div>
+        </div>
+      </div>`).join('');
+  } else {
+    list.innerHTML = `
+      <div class="order-item">
+        <div class="item-img-ph">🎴</div>
+        <div class="item-info">
+          <div class="item-name">${esc(label || 'Cartas Pokémon')}</div>
+        </div>
+      </div>`;
+  }
+
+  if (meta.buyerName || meta.buyerEmail) {
+    document.getElementById('buyer-box').style.display = 'block';
+    document.getElementById('b-name').textContent  = meta.buyerName  || '—';
+    document.getElementById('b-email').textContent = meta.buyerEmail || '—';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  4. ESTADOS VISUALES
+// ═══════════════════════════════════════════════════════════════
+function setActiveDot(idx) {
+  for (let i = 0; i < 5; i++) {
+    const d = document.getElementById('dot-' + i);
+    if (d) d.className = 'poll-dot' + (i === idx ? ' active' : '');
+  }
+  const txt = document.getElementById('attempt-text');
+  
+  if (txt) txt.textContent = 'Intento ' + (idx + 1) + ' de ' + MAX_ATTEMPTS + '...';
+}
+
+function applyState(state, data) {
+  const card    = document.getElementById('main-card');
+  const icon    = document.getElementById('big-icon');
+  const badge   = document.getElementById('status-badge');
+  const title   = document.getElementById('page-title');
+  const sub     = document.getElementById('page-sub');
+  const spinner = document.getElementById('spinner-wrap');
+  const btns    = document.getElementById('btns-section');
+
+  spinner.style.display = 'none';
+  btns.style.display    = 'flex';
+
+  if (state === 'paid') {
+    // ── PAGO EXITOSO ──────────────────────────────────────────
+    card.className    = 'card paid';
+    icon.textContent  = '🎉';
+    badge.className   = 'status-badge badge-paid';
+    badge.textContent = '✓ PAGO CONFIRMADO';
+    title.className   = 'page-title gold';
+    title.textContent = '¡Gracias!';
+    sub.textContent   = '¡Tu pago fue confirmado! Tus cartas Pokémon están en camino.';
+
+    document.getElementById('section-order').style.display = 'block';
+    fillOrderDetail(data);
+
+    btns.innerHTML = `<a href="/" class="btn-success">🎴 SEGUIR COMPRANDO</a>`;
+    launchConfetti();
+
+  } else if (state === 'cancelled' || state === 'expired' || state === 'failed' || state === 'error') {
+    // ── PAGO FALLIDO / CANCELADO ──────────────────────────────
+    card.className = 'card failed';
+
+    if (state === 'expired') {
+      icon.textContent  = '⏱️';
+      badge.textContent = '⏱️ TIEMPO AGOTADO';
+      title.textContent = '¡Tiempo agotado!';
+      sub.textContent   = 'El tiempo para completar el pago expiró. Podés iniciar una nueva compra.';
+    } else if (state === 'error') {
+      icon.textContent  = '⚠️';
+      badge.textContent = '⚠️ ERROR EN EL PAGO';
+      title.textContent = '¡Ups!';
+      sub.textContent   = 'Hubo un problema al procesar tu pago. No se realizó ningún cobro.';
+    } else {
+      icon.textContent  = '😞';
+      badge.textContent = '❌ PAGO NO COMPLETADO';
+      title.textContent = '¡Ups!';
+      sub.textContent   = 'Tu pago no se completó. No te preocupes, no se realizó ningún cobro.';
+    }
+
+    badge.className = 'status-badge badge-failed';
+    title.className = 'page-title red';
+    document.getElementById('section-reasons').style.display = 'block';
+
+    btns.innerHTML = `
+      <a href="/" class="btn-danger">🛒 VOLVER A LA TIENDA</a>
+      <a href="/" class="btn-outline">← Intentar nuevamente</a>`;
+
+  } else {
+    // ── PENDIENTE ─────────────────────────────────────────────
+    card.className    = 'card pending';
+    icon.textContent  = '⏳';
+    badge.className   = 'status-badge badge-pending';
+    badge.textContent = '⏳ PAGO PENDIENTE';
+    title.className   = 'page-title gray';
+    title.textContent = 'Pendiente';
+    sub.textContent   = 'Tu pago está siendo procesado. Recibirás confirmación en breve.';
+
+    btns.innerHTML = `
+      <button class="btn-retry" onclick="startPolling()">🔄 Verificar nuevamente</button>
+      <a href="/" class="btn-outline">← Volver a la tienda</a>`;
+  }
+
+  if (debtId) document.getElementById('debt-ref-txt').textContent = 'Ref: ' + debtId;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  5. POLLING: consulta al backend con reintentos
+// ═══════════════════════════════════════════════════════════════
+async function checkOnce() {
+  const res  = await fetch('/api/check-payment/' + encodeURIComponent(debtId));
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+  return data;
+}
+
+async function startPolling() {
+  attempt = 0;
+  document.getElementById('spinner-wrap').style.display    = 'block';
+  document.getElementById('btns-section').style.display    = 'none';
+  document.getElementById('section-order').style.display   = 'none';
+  document.getElementById('section-reasons').style.display = 'none';
+  document.getElementById('main-card').className           = 'card loading';
+  document.getElementById('big-icon').textContent          = '⏳';
+  document.getElementById('page-title').textContent        = 'Verificando';
+  document.getElementById('page-title').className          = 'page-title gray';
+  document.getElementById('status-badge').textContent      = 'VERIFICANDO PAGO...';
+  document.getElementById('status-badge').className        = 'status-badge badge-loading';
+  document.getElementById('page-sub').textContent          = 'Estamos confirmando tu pago con AdamsPay.';
+
+  poll();
+}
+
+async function poll() {
+  if (attempt >= MAX_ATTEMPTS) {
+    // Agotamos intentos → mostrar pendiente
+    applyState('pending', {});
+    return;
+  }
+
+  setActiveDot(attempt);
+
+  try {
+    
+    const data = await checkOnce();
+    console.log('[poll]', data);
+
+    if (data.status === 'paid') { applyState('paid', data); return; }
+
+    if (data.status === 'pending') { 
+      let tryCount = 0;
+      for (let i = 0; i < 2; i++) {
+        let fetchpoke = await checkOnce();
+        if (fetchpoke.status === 'pending'){
+          tryCount++;
+        }
+      }
+      if(tryCount >= 2 && fetchpoke.status === 'pending'){
+        applyState('cancelled', data);
+        return;
+      }
+    
+    }
+
+    if (['cancelled', 'expired', 'error'].includes(data.status)) { applyState(data.status, data); return; }
+    
+  } catch (err) {
+    // Error de red → reintentar
+    attempt++;
+    if (attempt >= MAX_ATTEMPTS) applyState('error', {});
+    else setTimeout(poll, POLL_DELAY);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  6. CONFETTI
+// ═══════════════════════════════════════════════════════════════
+function launchConfetti() {
+  const canvas = document.getElementById('confetti-canvas');
+  const ctx    = canvas.getContext('2d');
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+  const colors = ['#FFD700','#E3350D','#1B6FDE','#3ddc84','#FF6B35','#b07cff','#ff69b4'];
+  const pieces = Array.from({ length: 150 }, () => ({
+    x: Math.random() * canvas.width,
+    y: Math.random() * -canvas.height * .6,
+    r: Math.random() * 8 + 3,
+    c: colors[Math.floor(Math.random() * colors.length)],
+    v: Math.random() * 3.5 + 1.5,
+    a: Math.random() * 360,
+    spin: (Math.random() - .5) * 7,
+  }));
+  let frame = 0;
+  (function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    pieces.forEach(p => {
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.a * Math.PI / 180);
+      ctx.fillStyle = p.c; ctx.fillRect(-p.r / 2, -p.r / 2, p.r, p.r * .5); ctx.restore();
+      p.y += p.v; p.a += p.spin;
+    });
+    if (++frame < 220) requestAnimationFrame(draw);
+    else ctx.clearRect(0, 0, canvas.width, canvas.height);
+  })();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  7. INICIO (siempre al final)
+// ═══════════════════════════════════════════════════════════════
+cleanOldOrders();
+
+if (!debtId) {
+  if (reason === 'cancelled' || reason === 'expired') applyState(reason, {});
+  else applyState('error', {});          // sin referencia no hay nada que confirmar
+} else {
+  startPolling();                        // el estado real sale de la base
+}
+</script>
+</body>
+</html>
