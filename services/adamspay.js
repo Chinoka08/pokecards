@@ -1,7 +1,7 @@
 // Cliente de AdamsPay: configuración + request genérico.
 const fetch = require('node-fetch');
 
-const ENV   = process.env.ADAMSPAY_ENV || 'staging';
+const ENV   = process.env.ADAMSPAY_ENV || 'production';
 const BASES = {
   staging:    'https://staging.adamspay.com/api/v1',
   production: 'https://checkout.adamspay.com/api/v1',
