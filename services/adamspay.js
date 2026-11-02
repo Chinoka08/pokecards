@@ -9,8 +9,8 @@ const BASES = {
 const BASE_URL   = BASES[ENV];
 const API_KEY    = process.env.ADAMSPAY_API_KEY;
 console.log('[Debug] env:', ENV, '| apikey length:', API_KEY ? API_KEY.length : 0);
-const RETURN_URL = process.env.RETURN_URL || 'http://localhost:3000/gracias.html';
-const CANCEL_URL = process.env.CANCEL_URL || 'http://localhost:3000/cancelado.html';
+const RETURN_URL = process.env.RETURN_URL; 
+const CANCEL_URL = process.env.CANCEL_URL; 
 
 // AdamsPay: fecha UTC sin milisegundos
 function toAdamsDate(date) {
