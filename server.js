@@ -49,13 +49,8 @@ app.use('/api', paymentsRoutes);
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
-const app  = express();
-const PORT = process.env.PORT || 3000;
 
-app.set('trust proxy', 1);   // correcto detrás del proxy de Back4app
-app.set('etag', false);      // evita los 304 del polling
 
-app.use(helmet({ contentSecurityPolicy: false }));
 // ── Arranque: conecta a MongoDB, abre el puerto y sincroniza en segundo plano ──
 (async () => {
   await connectDB();
