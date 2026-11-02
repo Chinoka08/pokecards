@@ -17,17 +17,19 @@ function toAdamsDate(date) {
   return date.toISOString().replace(/\.\d{3}Z$/, '');
 }
 
-async function adamspayRequest(method, endpoint, body = null) {
+async function adamspayRequest(method, endpoint, body = null, { quiet = false } = {}) {
   const options = {
     method,
     headers: { 'Content-Type': 'application/json', 'apikey': API_KEY, 'x-if-exists': 'update' },
   };
   if (body) options.body = JSON.stringify(body);
-  console.log('\n[AdamsPay]', method, BASE_URL + endpoint);
-  if (body) console.log('[Body]', JSON.stringify(body, null, 2));
+  if (!quiet) {
+    console.log('\n[AdamsPay]', method, BASE_URL + endpoint);
+    if (body) console.log('[Body]', JSON.stringify(body, null, 2));
+  }
   const res  = await fetch(`${BASE_URL}${endpoint}`, options);
   const data = await res.json();
-  console.log('[Respuesta]', res.status, JSON.stringify(data, null, 2));
+  if (!quiet) console.log('[Respuesta]', res.status, JSON.stringify(data, null, 2));
   return { status: res.status, data };
 }
 
