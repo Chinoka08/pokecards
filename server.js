@@ -49,21 +49,35 @@ app.use('/api', paymentsRoutes);
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
+const app  = express();
+const PORT = process.env.PORT || 3000;
 
-// ── Arranque: conecta a MongoDB, siembra el catálogo y lo completa (1 request a PokéAPI la primera vez) ──
+app.set('trust proxy', 1);   // correcto detrás del proxy de Back4app
+app.set('etag', false);      // evita los 304 del polling
+
+app.use(helmet({ contentSecurityPolicy: false }));
+// ── Arranque: conecta a MongoDB, abre el puerto y sincroniza en segundo plano ──
 (async () => {
   await connectDB();
   await seedCatalog();
-  await syncPokemons({ force: true });
-  const synced = await countSynced(), total = await countTotal();
+
   app.listen(PORT, () => {
     console.log('\n========================================');
     console.log('   PokeCards Store — Backend v3');
     console.log('========================================');
-    console.log('   URL:         http://localhost:' + PORT);
+    console.log('   Puerto:      ' + PORT);
     console.log('   Ambiente:    ' + adams.ENV.toUpperCase());
-    console.log('   Pokémon:     ' + synced + '/' + total + ' cartas en la base');
-    console.log('   Diagnostico: http://localhost:' + PORT + '/api/test-adamspay');
     console.log('========================================\n');
   });
+
+  // Sincroniza con PokéAPI solo si faltan cartas, sin bloquear el arranque
+  try {
+    const total = await countTotal();
+    if (await countSynced() < total) {
+      await syncPokemons({ force: true });
+    }
+    console.log('   Pokémon:     ' + await countSynced() + '/' + total + ' cartas en la base');
+  } catch (err) {
+    console.error('[sync] No se pudo sincronizar:', err.message);
+  }
 })();
