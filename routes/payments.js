@@ -12,6 +12,26 @@ function mapDebtStatus(debt) {
   return debt?.status || 'pending';   // compatibilidad con lo que ya tenías
 }
 
+
+// Aplica un cambio de estado una sola vez (lo usan el webhook y check-payment)
+async function applyStatus(order, newStatus, notifyId) {
+  if (order.status === newStatus) return false;
+  if (order.status === 'paid') return false;          // un pago confirmado no retrocede
+
+  const previous = order.status;
+  order.status = newStatus;
+  if (notifyId) order.lastNotifyId = notifyId;
+  order.paidAt = newStatus === 'paid' ? new Date() : undefined;
+  await order.save();
+
+  console.log('[Estado]', order.debtId, previous, '->', newStatus);
+  if (newStatus === 'paid') {
+    // Acá va lo que deba ocurrir una sola vez al cobrar: email, stock, etc.
+    console.log('✅ PAGADO:', order.debtId);
+  }
+  return true;
+}
+
 // Arma la respuesta con la misma forma que espera gracias.html
 function orderToResponse(o) {
   return {
@@ -131,11 +151,29 @@ router.post('/create-payment', async (req, res) => {
 });
 
 
-// GET /api/check-payment/:debtId  → lee el estado que dejó el webhook
+// GET /api/check-payment/:debtId
+// Si el pedido sigue "pending", pregunta directo a AdamsPay (no depende solo del webhook)
 router.get('/check-payment/:debtId', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   try {
     const order = await Order.findOne({ debtId: req.params.debtId });
     if (!order) return res.status(404).json({ error: 'Pedido no encontrado.' });
+
+    if (order.status === 'pending') {
+      try {
+        const { status, data } = await adamspayRequest(
+          'GET', '/debts/' + encodeURIComponent(order.debtId), null, { quiet: true }
+        );
+        console.log('[check-payment] AdamsPay', status,
+          '| payStatus:', data?.debt?.payStatus?.status,
+          '| objStatus:', data?.debt?.objStatus?.status);
+        if (status === 200 && data?.debt) {
+          await applyStatus(order, mapDebtStatus(data.debt));
+        }
+      } catch (e) {
+        console.warn('[check-payment] No se pudo consultar AdamsPay:', e.message);
+      }
+    }
     return res.json(orderToResponse(order));
   } catch (err) {
     console.error('[check-payment]', err.message);
@@ -186,23 +224,7 @@ async function webhookHandler(req, res) {
       return res.status(200).json({ ignored: true });
     }
 
-    // 3) La notificación puede ser por otro motivo (cambió la descripción,
-    //    pago fallido, repetición...). Solo actuamos si el estado cambió.
-    if (order.status === newStatus) return res.status(200).json({ received: true });
-
-    const previous = order.status;
-    order.status = newStatus;
-    order.lastNotifyId = notify.id;
-    order.paidAt = newStatus === 'paid' ? new Date() : undefined;
-    await order.save();
-
-    console.log('[Webhook]', debt.docId, previous, '->', newStatus);
-
-    if (newStatus === 'paid' && previous !== 'paid') {
-      // Acá va lo que deba ocurrir una sola vez al cobrar:
-      // enviar email, descontar stock, etc.
-      console.log('✅ PAGADO:', debt.docId);
-    }
+    await applyStatus(order, newStatus, notify.id);
     return res.status(200).json({ received: true });
 
   } catch (err) {

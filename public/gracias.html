@@ -84,7 +84,7 @@ const reason = params.get('reason'); // 'cancelled' | 'expired' | null
 
 // Reintenta hasta 5 veces con 2s de pausa entre intentos
 const MAX_ATTEMPTS = 5;
-const POLL_DELAY   = 2000; // ms
+const POLL_DELAY   = 4000; // ms
 let   attempt      = 0;
 
 
@@ -328,7 +328,7 @@ function applyState(state, data) {
 //  5. POLLING: consulta al backend con reintentos
 // ═══════════════════════════════════════════════════════════════
 async function checkOnce() {
-  const res  = await fetch('/api/check-payment/' + encodeURIComponent(debtId));
+  const res  = await fetch('/api/check-payment/' + encodeURIComponent(debtId), { cache: 'no-store' });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
   return data;
@@ -353,43 +353,28 @@ async function startPolling() {
 
 async function poll() {
   if (attempt >= MAX_ATTEMPTS) {
-    // Agotamos intentos → mostrar pendiente
-    applyState('pending', {});
+    applyState('pending', {});   // sigue en proceso: botón "Verificar nuevamente"
     return;
   }
 
   setActiveDot(attempt);
 
   try {
-    
     const data = await checkOnce();
     console.log('[poll]', data);
 
     if (data.status === 'paid') { applyState('paid', data); return; }
-
-    if (data.status === 'pending') { 
-      let tryCount = 0;
-      for (let i = 0; i < 2; i++) {
-        let fetchpoke = await checkOnce();
-        if (fetchpoke.status === 'pending'){
-          tryCount++;
-        }
-      }
-      if(tryCount >= 2 && fetchpoke.status === 'pending'){
-        applyState('cancelled', data);
-        return;
-      }
-    
+    if (['cancelled', 'expired', 'error', 'failed'].includes(data.status)) {
+      applyState(data.status, data);
+      return;
     }
-
-    if (['cancelled', 'expired', 'error'].includes(data.status)) { applyState(data.status, data); return; }
-    
+    // 'pending' → sigue con el próximo intento
   } catch (err) {
-    // Error de red → reintentar
-    attempt++;
-    if (attempt >= MAX_ATTEMPTS) applyState('error', {});
-    else setTimeout(poll, POLL_DELAY);
+    console.warn('[poll] fallo de red:', err);
   }
+
+  attempt++;
+  setTimeout(poll, POLL_DELAY);
 }
 
 // ═══════════════════════════════════════════════════════════════
