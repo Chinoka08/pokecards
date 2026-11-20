@@ -10,6 +10,38 @@
 <body>
 <canvas id="confetti-canvas"></canvas>
 
+<link href="https://cdn.jsdelivr.net/npm/@n8n/chat/dist/style.css" rel="stylesheet" />
+<style>
+  :root {
+    --chat--color--primary: #E3350D;
+    --chat--header--background: #1B1B2F;
+  }
+</style>
+<script type="module">
+  import { createChat } from 'https://cdn.jsdelivr.net/npm/@n8n/chat/dist/chat.bundle.es.js';
+
+  createChat({
+    webhookUrl: 'https://test-pokecards.app.n8n.cloud/webhook/75588d89-142f-411c-be94-eb4b8b0cb3e1/chat',
+    mode: 'window',
+    enableStreaming: true,
+    loadPreviousSession: false,
+    initialMessages: [
+      '¡Hola! Soy el asistente de PokeCards Store.',
+      '¿Te ayudo con el estado de tu pago o con nuestras cartas?'
+    ],
+    i18n: {
+      en: {
+        title: 'PokeCards Store',
+        subtitle: 'Soporte al cliente 24/7',
+        footer: '',
+        getStarted: 'Nueva conversación',
+        inputPlaceholder: 'Escribí tu consulta...',
+      },
+    },
+  });
+</script>
+
+
 <div class="card loading" id="main-card">
 
   <div class="page-header">
